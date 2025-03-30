@@ -45,7 +45,8 @@ def compute_terrain_attribute(
         ),
         attrib=attrib,
     )
-    return reduce_func(attrib_arr[attrib_arr != dst_fill])
+
+    return reduce_func(attrib_arr[attrib_arr != dst_fill]).item()
 
 
 def northness(aspect_arr: npt.ArrayLike) -> float:
