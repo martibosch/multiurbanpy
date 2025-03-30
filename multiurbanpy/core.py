@@ -22,9 +22,6 @@ from tqdm import tqdm
 from multiurbanpy import topo, utils
 from multiurbanpy.swisstopo import buildings, dem, tree_canopy
 
-tqdm.pandas()
-
-
 # geo utils
 
 KERNEL_DTYPE = "uint8"
@@ -245,23 +242,23 @@ class FeatureComputer(RegionMixin):
         if getattr(self, "_tmp_dir", False):
             shutil.rmtree(self.working_dir)
 
-    def compute_bldg_features_df(
+    def compute_bldg_features(
         self, sample_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
-    ) -> pd.DataFrame:
-        """Compute building area and volume."""
+    ) -> pd.DataFrame | pd.Series:
+        """Compute building area (and volume if `bldg_gdf` has a "height" column)."""
 
-        def _compute_bldg_area(_bldg_gdf, buffer_dist):
+        def _compute_bldg_area(_bldg_gdf):
             return pd.Series(
                 {
-                    f"bldg_area_{buffer_dist}": _bldg_gdf["geometry"].area.sum(),
+                    "bldg_area": _bldg_gdf["geometry"].area.sum(),
                 }
             )
 
-        def _compute_bldg_area_vol(_bldg_gdf, buffer_dist):
+        def _compute_bldg_area_vol(_bldg_gdf):
             return pd.Series(
                 {
-                    f"bldg_area_{buffer_dist}": _bldg_gdf["geometry"].area.sum(),
-                    f"bldg_volume_{buffer_dist}": (
+                    "bldg_area": _bldg_gdf["geometry"].area.sum(),
+                    "bldg_volume": (
                         _bldg_gdf["geometry"].area * _bldg_gdf["height"]
                     ).sum(),
                 }
@@ -274,55 +271,67 @@ class FeatureComputer(RegionMixin):
             _compute_features = _compute_bldg_area
         sample_index_name = sample_gser.index.name
 
-        return pd.concat(
-            [
-                sample_gser.buffer(buffer_dist)
-                .to_frame(name="geometry")
-                .sjoin(self.bldg_gdf)
-                .reset_index(sample_index_name)
-                .groupby(by=sample_index_name)
-                .apply(_compute_features, buffer_dist, include_groups=False)
-                / (np.pi * buffer_dist**2)
-                for buffer_dist in buffer_dists
-            ],
-            axis="columns",
-        ).fillna(0)
+        return (
+            pd.concat(
+                [
+                    (
+                        sample_gser.buffer(buffer_dist)
+                        .to_frame(name="geometry")
+                        .sjoin(self.bldg_gdf)
+                        .reset_index(sample_index_name)
+                        .groupby(by=sample_index_name)
+                        .apply(_compute_features, include_groups=False)
+                        / (np.pi * buffer_dist**2)
+                    ).assign(buffer_dist=buffer_dist)
+                    for buffer_dist in buffer_dists
+                ],
+                axis="rows",
+            )
+            .fillna(0)
+            .set_index("buffer_dist", append=True)
+            .sort_index()
+        )
 
     @staticmethod
-    def _multiscale_raster_stats_feature_df(
+    def _multiscale_raster_stats_feature_ser(
         src: rio.DatasetReader,
         sample_gser: gpd.GeoSeries,
         buffer_dists: Iterable[float],
         stat: str,
         *,
         rescale: bool = False,
-        columns: Iterable | None = None,
         **arr_to_features_kwargs,
-    ) -> pd.DataFrame:
+    ) -> pd.Series:
         """Compute statistics of raster values at multiple buffer distances."""
         # TODO: add support for multiple stats
-        features_df = pd.concat(
-            [
-                pd.DataFrame(
-                    rasterstats.zonal_stats(
-                        sample_gser.buffer(buffer_dist),
-                        src.read(1),  # assume single band
-                        nodata=src.nodata,
-                        affine=src.transform,
-                        stats=stat,
-                    ),
-                    index=sample_gser.index,
-                )[stat].rename(buffer_dist)
-                for buffer_dist in buffer_dists
-            ],
-            axis="columns",
-        )
-        if columns is not None:
-            features_df.columns = columns
+        features_ser = (
+            pd.concat(
+                [
+                    pd.DataFrame(
+                        rasterstats.zonal_stats(
+                            sample_gser.buffer(buffer_dist),
+                            src.read(1),  # assume single band
+                            nodata=src.nodata,
+                            affine=src.transform,
+                            stats=stat,
+                        ),
+                        index=sample_gser.index,
+                    ).assign(buffer_dist=buffer_dist)
+                    for buffer_dist in buffer_dists
+                ],
+                axis="rows",
+            )
+            .set_index("buffer_dist", append=True)
+            .sort_index()
+        ).fillna(0)
+
         if rescale:
-            for column, buffer_dist in zip(features_df.columns, buffer_dists):
-                features_df[column] /= buffer_dist**2
-        return features_df
+            # divide by buffer zone area
+            features_ser = features_ser.groupby("buffer_dist")["sum"].transform(
+                lambda x: x / (np.pi * float(x.name) ** 2)
+            )
+
+        return features_ser
 
     @staticmethod
     def _multiscale_raster_feature_df(
@@ -332,7 +341,6 @@ class FeatureComputer(RegionMixin):
         arr_to_features: Callable,
         *,
         rescale: bool = False,
-        columns: Iterable | None = None,
         **arr_to_features_kwargs,
     ) -> pd.DataFrame:
         """Compute features from a raster at multiple buffer distances.
@@ -350,7 +358,7 @@ class FeatureComputer(RegionMixin):
         }
 
         def _compute_sample_features(sample_geom, **arr_to_features_kwargs):
-            arr, _ = mask.mask(src, [sample_geom], crop=True, pad_width=1)
+            arr, _ = mask.mask(src, [sample_geom], crop=True)
             try:
                 return arr_to_features(
                     arr[0], buffer_mask_dict, **arr_to_features_kwargs
@@ -362,40 +370,53 @@ class FeatureComputer(RegionMixin):
                     **arr_to_features_kwargs,
                 )
 
-        if columns is None:
-            columns = buffer_dists
-        features_df = pd.DataFrame(
-            sample_gser.buffer(buffer_dists[-1])
-            .progress_apply(_compute_sample_features, **arr_to_features_kwargs)
-            .to_list(),
-            index=sample_gser.index,
-            columns=columns,
+        sample_index_name = sample_gser.index.name
+        features_df = (
+            pd.concat(
+                [
+                    _compute_sample_features(
+                        sample_geom, **arr_to_features_kwargs
+                    ).assign(**{sample_index_name: sample_id})
+                    for sample_id, sample_geom in tqdm(
+                        sample_gser.buffer(buffer_dists[-1]).items(),
+                        total=len(sample_gser),
+                    )
+                ]
+            )
+            .reset_index()
+            .set_index([sample_index_name, "buffer_dist"])
+            .sort_index()
         )
+
         if rescale:
             # TODO: improve column -> buffer_dist mapping
-            for column, buffer_dist in zip(columns, buffer_dists):
-                features_df[column] /= buffer_mask_dict[buffer_dist].sum()
+            # for column, buffer_dist in zip(columns, buffer_dists):
+            #     features_df[column] /= buffer_mask_dict[buffer_dist].sum()
+            features_df = features_df.apply(
+                lambda column_ser: column_ser.groupby("buffer_dist").transform(
+                    lambda x: x / (np.pi * float(x.name) ** 2)
+                )
+            )
 
         return features_df
 
-    def compute_tree_features_df(
+    def compute_tree_features(
         self,
         sample_gser: gpd.GeoSeries,
         buffer_dists: Iterable[float],
-    ) -> pd.DataFrame:
+    ) -> pd.Series:
         """Compute tree features."""
         with rio.open(self.tree_canopy_filepath) as src:
-            tree_features_df = FeatureComputer._multiscale_raster_stats_feature_df(
+            tree_features_ser = FeatureComputer._multiscale_raster_stats_feature_ser(
                 src,
                 sample_gser,
                 buffer_dists,
                 "sum",
                 rescale=True,
-                columns=[f"tree_canopy_{buffer_dist}" for buffer_dist in buffer_dists],
                 target_val=self.tree_val,
             )
 
-        return tree_features_df
+        return tree_features_ser.rename("tree_canopy")
 
     def compute_topo_features_df(
         self, sample_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
@@ -410,31 +431,49 @@ class FeatureComputer(RegionMixin):
                 sample_features = []
 
                 for buffer_dist in buffer_dists:
-                    buffer_dem_arr = np.where(
-                        buffer_mask_dict[buffer_dist], dem_arr, dem_nodata
+                    try:
+                        buffer_dem_arr = np.where(
+                            buffer_mask_dict[buffer_dist], dem_arr, dem_nodata
+                        )
+                    except ValueError:
+                        buffer_dem_arr = np.full(
+                            buffer_mask_dict[buffer_dist].shape, dem_nodata
+                        )
+                        buffer_dem_arr[: dem_arr.shape[0], : dem_arr.shape[1]] = dem_arr
+                    sample_features.append(
+                        [
+                            topo.compute_terrain_attribute(
+                                buffer_dem_arr,
+                                "slope_riserun",
+                                dem_res,
+                                dem_nodata,
+                                np.mean,
+                            ),
+                            topo.compute_terrain_attribute(
+                                buffer_dem_arr,
+                                "aspect",
+                                dem_res,
+                                dem_nodata,
+                                topo.northness,
+                            ),
+                            topo.comparative_height_at_center(
+                                np.where(
+                                    buffer_dem_arr != dem_nodata, buffer_dem_arr, np.nan
+                                ),
+                                np.nanmean,
+                            ),
+                            # topo.flow_accumulation_at_center(
+                            #     buffer_dem_arr, dem_res, dem_nodata
+                            # ),
+                        ]
                     )
-                    sample_features += [
-                        topo.compute_terrain_attribute(
-                            buffer_dem_arr,
-                            "slope_riserun",
-                            dem_res,
-                            dem_nodata,
-                            np.mean,
-                        ),
-                        topo.compute_terrain_attribute(
-                            buffer_dem_arr,
-                            "aspect",
-                            dem_res,
-                            dem_nodata,
-                            topo.northness,
-                        ),
-                        topo.comparative_height_at_center(buffer_dem_arr, np.mean),
-                        topo.flow_accumulation_at_center(
-                            buffer_dem_arr, dem_res, dem_nodata
-                        ),
-                    ]
 
-                return sample_features
+                return pd.DataFrame(
+                    sample_features,
+                    index=pd.Series(buffer_dists, name="buffer_dist"),
+                    # columns=["slope", "northness", "tpi", "fac"],
+                    columns=["slope", "northness", "tpi"],
+                )
 
             with warnings.catch_warnings(), np.errstate(divide="ignore"):
                 warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -444,16 +483,4 @@ class FeatureComputer(RegionMixin):
                     buffer_dists,
                     dem_arr_to_topo_features,
                     rescale=False,
-                    # ACHTUNG: the order of the column names must match how the features
-                    # are computed in `dem_arr_to_topo_features`
-                    columns=[
-                        f"{feature}_{buffer_dist}"
-                        for buffer_dist in buffer_dists
-                        for feature in [
-                            "slope",
-                            "northness",
-                            "tpi",
-                            "fac",
-                        ]
-                    ],
                 )
