@@ -19,8 +19,21 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13"
 ]
-packages = [
-  {include = "multiurbanpy"}
+dependencies = [
+  "geopandas>=1.0.0",
+  "meteora>=0.3.0",
+  "numpy>=2.0.0",
+  "osmnx>=2.0.0",
+  "pandas",
+  "pdal",
+  "pooch",
+  "pystac-client",
+  "rasterio",
+  "rasterstats",
+  "richdem",
+  "shapely",
+  "tqdm",
+  "wurlitzer"
 ]
 
 [project.license]
