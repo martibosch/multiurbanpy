@@ -16,7 +16,7 @@ import rasterstats
 from meteora.mixins import RegionMixin
 from meteora.utils import CRSType, RegionType
 from osgeo import gdal
-from rasterio import mask
+from rasterio import mask, transform
 from tqdm import tqdm
 
 from multiurbanpy import topo, utils
@@ -469,6 +469,17 @@ class FeatureComputer(RegionMixin):
             )
 
         return tree_features_ser.rename("tree_canopy")
+
+    def compute_elevation_ser(self, sample_gser: gpd.GeoSeries) -> pd.Series:
+        """Compute elevation."""
+        with rio.open(self.dem_filepath) as src:
+            return pd.Series(
+                src.read(1)[
+                    transform.rowcol(src.transform, sample_gser.x, sample_gser.y)
+                ],
+                index=sample_gser.index,
+                name="elevation",
+            )
 
     def compute_topo_features_df(
         self, sample_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
