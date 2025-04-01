@@ -130,8 +130,8 @@ def get_regular_grid_gser(
     )
 
 
-class FeatureComputer(RegionMixin):
-    """Compute features for a given region."""
+class MultiScaleFeatureComputer(RegionMixin):
+    """Compute multi-scale features for a given region."""
 
     def __init__(
         self,
@@ -295,7 +295,7 @@ class FeatureComputer(RegionMixin):
             shutil.rmtree(self.working_dir)
 
     def compute_bldg_features(
-        self, sample_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
+        self, site_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
     ) -> pd.DataFrame | pd.Series:
         """Compute building area (and volume if `bldg_gdf` has a "height" column)."""
 
@@ -321,17 +321,17 @@ class FeatureComputer(RegionMixin):
             _compute_features = _compute_bldg_area_vol
         else:
             _compute_features = _compute_bldg_area
-        sample_index_name = sample_gser.index.name
+        site_index_name = site_gser.index.name
 
         return (
             pd.concat(
                 [
                     (
-                        sample_gser.buffer(buffer_dist)
+                        site_gser.buffer(buffer_dist)
                         .to_frame(name="geometry")
                         .sjoin(self.bldg_gdf)
-                        .reset_index(sample_index_name)
-                        .groupby(by=sample_index_name)
+                        .reset_index(site_index_name)
+                        .groupby(by=site_index_name)
                         .apply(_compute_features, include_groups=False)
                         / (np.pi * buffer_dist**2)
                     ).assign(buffer_dist=buffer_dist)
@@ -347,7 +347,7 @@ class FeatureComputer(RegionMixin):
     @staticmethod
     def _multiscale_raster_stats_feature_ser(
         src: rio.DatasetReader,
-        sample_gser: gpd.GeoSeries,
+        site_gser: gpd.GeoSeries,
         buffer_dists: Iterable[float],
         stat: str,
         *,
@@ -361,13 +361,13 @@ class FeatureComputer(RegionMixin):
                 [
                     pd.DataFrame(
                         rasterstats.zonal_stats(
-                            sample_gser.buffer(buffer_dist),
+                            site_gser.buffer(buffer_dist),
                             src.read(1),  # assume single band
                             nodata=src.nodata,
                             affine=src.transform,
                             stats=stat,
                         ),
-                        index=sample_gser.index,
+                        index=site_gser.index,
                     ).assign(buffer_dist=buffer_dist)
                     for buffer_dist in buffer_dists
                 ],
@@ -388,7 +388,7 @@ class FeatureComputer(RegionMixin):
     @staticmethod
     def _multiscale_raster_feature_df(
         src: rio.DatasetReader,
-        sample_gser: gpd.GeoSeries,
+        site_gser: gpd.GeoSeries,
         buffer_dists: Iterable[float],
         arr_to_features: Callable,
         *,
@@ -409,8 +409,8 @@ class FeatureComputer(RegionMixin):
             for buffer_dist in buffer_dists
         }
 
-        def _compute_sample_features(sample_geom, **arr_to_features_kwargs):
-            arr, _ = mask.mask(src, [sample_geom], crop=True)
+        def _compute_site_features(site_geom, **arr_to_features_kwargs):
+            arr, _ = mask.mask(src, [site_geom], crop=True)
             try:
                 return arr_to_features(
                     arr[0], buffer_mask_dict, **arr_to_features_kwargs
@@ -422,21 +422,21 @@ class FeatureComputer(RegionMixin):
                     **arr_to_features_kwargs,
                 )
 
-        sample_index_name = sample_gser.index.name
+        site_index_name = site_gser.index.name
         features_df = (
             pd.concat(
                 [
-                    _compute_sample_features(
-                        sample_geom, **arr_to_features_kwargs
-                    ).assign(**{sample_index_name: sample_id})
-                    for sample_id, sample_geom in tqdm(
-                        sample_gser.buffer(buffer_dists[-1]).items(),
-                        total=len(sample_gser),
+                    _compute_site_features(site_geom, **arr_to_features_kwargs).assign(
+                        **{site_index_name: site_id}
+                    )
+                    for site_id, site_geom in tqdm(
+                        site_gser.buffer(buffer_dists[-1]).items(),
+                        total=len(site_gser),
                     )
                 ]
             )
             .reset_index()
-            .set_index([sample_index_name, "buffer_dist"])
+            .set_index([site_index_name, "buffer_dist"])
             .sort_index()
         )
 
@@ -454,35 +454,35 @@ class FeatureComputer(RegionMixin):
 
     def compute_tree_features(
         self,
-        sample_gser: gpd.GeoSeries,
+        site_gser: gpd.GeoSeries,
         buffer_dists: Iterable[float],
     ) -> pd.Series:
         """Compute tree features."""
         with rio.open(self.tree_canopy_filepath) as src:
-            tree_features_ser = FeatureComputer._multiscale_raster_stats_feature_ser(
-                src,
-                sample_gser,
-                buffer_dists,
-                "sum",
-                rescale=True,
-                target_val=self.tree_val,
+            tree_features_ser = (
+                MultiScaleFeatureComputer._multiscale_raster_stats_feature_ser(
+                    src,
+                    site_gser,
+                    buffer_dists,
+                    "sum",
+                    rescale=True,
+                    target_val=self.tree_val,
+                )
             )
 
         return tree_features_ser.rename("tree_canopy")
 
-    def compute_elevation_ser(self, sample_gser: gpd.GeoSeries) -> pd.Series:
+    def compute_elevation_ser(self, site_gser: gpd.GeoSeries) -> pd.Series:
         """Compute elevation."""
         with rio.open(self.dem_filepath) as src:
             return pd.Series(
-                src.read(1)[
-                    transform.rowcol(src.transform, sample_gser.x, sample_gser.y)
-                ],
-                index=sample_gser.index,
+                src.read(1)[transform.rowcol(src.transform, site_gser.x, site_gser.y)],
+                index=site_gser.index,
                 name="elevation",
             )
 
     def compute_topo_features_df(
-        self, sample_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
+        self, site_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
     ) -> pd.DataFrame:
         """Compute topographic features."""
         with rio.open(self.dem_filepath) as src:
@@ -491,7 +491,7 @@ class FeatureComputer(RegionMixin):
 
             @topo.no_outputs
             def dem_arr_to_topo_features(dem_arr, buffer_mask_dict):
-                sample_features = []
+                site_features = []
 
                 for buffer_dist in buffer_dists:
                     try:
@@ -503,7 +503,7 @@ class FeatureComputer(RegionMixin):
                             buffer_mask_dict[buffer_dist].shape, dem_nodata
                         )
                         buffer_dem_arr[: dem_arr.shape[0], : dem_arr.shape[1]] = dem_arr
-                    sample_features.append(
+                    site_features.append(
                         [
                             topo.compute_terrain_attribute(
                                 buffer_dem_arr,
@@ -532,7 +532,7 @@ class FeatureComputer(RegionMixin):
                     )
 
                 return pd.DataFrame(
-                    sample_features,
+                    site_features,
                     index=pd.Series(buffer_dists, name="buffer_dist"),
                     # columns=["slope", "northness", "tpi", "fac"],
                     columns=["slope", "northness", "tpi"],
@@ -540,9 +540,9 @@ class FeatureComputer(RegionMixin):
 
             with warnings.catch_warnings(), np.errstate(divide="ignore"):
                 warnings.simplefilter("ignore", category=RuntimeWarning)
-                return FeatureComputer._multiscale_raster_feature_df(
+                return MultiScaleFeatureComputer._multiscale_raster_feature_df(
                     src,
-                    sample_gser,
+                    site_gser,
                     buffer_dists,
                     dem_arr_to_topo_features,
                     rescale=False,
