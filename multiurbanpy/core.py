@@ -22,6 +22,9 @@ from tqdm import tqdm
 from multiurbanpy import topo, utils
 from multiurbanpy.swisstopo import buildings, dem, tree_canopy
 
+__all__ = ["generate_regular_grid_gser", "MultiScaleFeatureComputer"]
+
+
 # compute/geo utils
 
 KERNEL_DTYPE = "uint8"
