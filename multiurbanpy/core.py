@@ -22,6 +22,9 @@ from tqdm import tqdm
 from multiurbanpy import topo, utils
 from multiurbanpy.swisstopo import buildings, dem, tree_canopy
 
+# to use `progress_apply`
+tqdm.pandas()
+
 __all__ = ["generate_regular_grid_gser", "MultiScaleFeatureComputer"]
 
 
@@ -340,7 +343,7 @@ class MultiScaleFeatureComputer(RegionMixin):
                         .sjoin(self.bldg_gdf)
                         .reset_index(site_index_name)
                         .groupby(by=site_index_name)
-                        .apply(_compute_features, include_groups=False)
+                        .progress_apply(_compute_features, include_groups=False)
                         / (np.pi * buffer_dist**2)
                     ).assign(buffer_dist=buffer_dist)
                     for buffer_dist in buffer_dists
