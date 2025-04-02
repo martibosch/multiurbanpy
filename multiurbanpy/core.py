@@ -78,7 +78,7 @@ def get_buffer_mask(
     )
 
 
-def get_regular_grid_gser(
+def generate_regular_grid_gser(
     region_gser: gpd.GeoSeries, grid_res: float, *, crs: CRSType | None = None
 ) -> gpd.GeoSeries:
     """
@@ -127,7 +127,7 @@ def get_regular_grid_gser(
 
     return pd.concat(
         [_grid_from_geom(region_geom) for region_geom in region_gser], ignore_index=True
-    )
+    ).rename_axis("grid_cell_id")
 
 
 class MultiScaleFeatureComputer(RegionMixin):
@@ -321,7 +321,12 @@ class MultiScaleFeatureComputer(RegionMixin):
             _compute_features = _compute_bldg_area_vol
         else:
             _compute_features = _compute_bldg_area
+
+        # TODO: DRY with `_multiscale_raster_feature_df`
         site_index_name = site_gser.index.name
+        if site_index_name is None:
+            site_index_name = "site_id"
+            site_gser = site_gser.rename_axis(site_index_name)
 
         return (
             pd.concat(
@@ -422,7 +427,12 @@ class MultiScaleFeatureComputer(RegionMixin):
                     **arr_to_features_kwargs,
                 )
 
+        # TODO: DRY with `compute_bldg_features`
         site_index_name = site_gser.index.name
+        if site_index_name is None:
+            site_index_name = "site_id"
+            site_gser = site_gser.rename_axis(site_index_name)
+
         features_df = (
             pd.concat(
                 [
