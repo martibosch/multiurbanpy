@@ -367,6 +367,8 @@ class MultiScaleFeatureComputer(RegionMixin):
     ) -> pd.Series:
         """Compute statistics of raster values at multiple buffer distances."""
         # TODO: add support for multiple stats
+        # TODO: support progress bar once related issue is solved:
+        # https://github.com/perrygeo/python-rasterstats/issues/303
         features_ser = (
             pd.concat(
                 [
