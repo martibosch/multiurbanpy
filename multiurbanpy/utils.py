@@ -9,8 +9,6 @@ from collections.abc import Mapping
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from rasterio.crs import CRS
-
 from multiurbanpy import settings
 
 ########################################################################################
@@ -19,8 +17,6 @@ from multiurbanpy import settings
 PathType = str | os.PathLike
 # type hint for keyword arguments
 KwargsType = Mapping | None
-# type hint for CRS
-CRSType = str | dict | CRS
 
 
 ########################################################################################

@@ -13,9 +13,8 @@ import numpy.typing as npt
 import pandas as pd
 import rasterio as rio
 import rasterstats
-from meteora.mixins import RegionMixin
-from meteora.utils import CRSType, RegionType
 from osgeo import gdal
+from pyregeon import CRSType, RegionMixin, RegionType
 from rasterio import mask, transform
 from tqdm import tqdm
 
@@ -25,7 +24,7 @@ from multiurbanpy.swisstopo import buildings, dem, tree_canopy
 # to use `progress_apply`
 tqdm.pandas()
 
-__all__ = ["generate_regular_grid_gser", "MultiScaleFeatureComputer"]
+__all__ = ["MultiScaleFeatureComputer"]
 
 
 # compute/geo utils
@@ -84,58 +83,6 @@ def get_buffer_mask(
     )
 
 
-def generate_regular_grid_gser(
-    region_gser: gpd.GeoSeries, grid_res: float, *, crs: CRSType | None = None
-) -> gpd.GeoSeries:
-    """
-    Get a regular grid of points within a region.
-
-    Parameters
-    ----------
-    region : region-like
-        The region for which to generate the grid.
-    grid_res : float
-        The grid resolution in units of the region's CRS.
-    crs : CRS-like, optional
-        The CRS of the grid, required if the region is a naive geometry (without a CRS
-        set), ignored otherwise.
-
-    Returns
-    -------
-    grid_gser: gpd.GeoSeries
-        A geo-series with the grid points.
-    """
-    crs = getattr(region_gser, "crs", crs)
-    if crs is None:
-        raise ValueError("If providing a naive geometry, the CRS must be provided.")
-
-    def _grid_from_geom(region_geom):
-        left = region_geom.bounds[0]
-
-        top = region_geom.bounds[3]
-        num_cols = int(np.ceil((region_geom.bounds[2] - left) / grid_res))
-        num_rows = int(np.ceil((region_geom.bounds[1]) / grid_res))
-
-        # generate a grid of size using numpy meshgrid
-        grid_x, grid_y = np.meshgrid(
-            np.arange(num_cols) * grid_res + left,
-            top - np.arange(num_rows) * grid_res,
-            indexing="xy",
-        )
-
-        # vectorize the grid as a geo series
-        grid_gser = gpd.GeoSeries(
-            gpd.points_from_xy(grid_x.flatten(), grid_y.flatten(), crs=crs)
-        )
-
-        # filter out points that are outside the agglomeration extent
-        return grid_gser[grid_gser.within(region_geom)]
-
-    return pd.concat(
-        [_grid_from_geom(region_geom) for region_geom in region_gser], ignore_index=True
-    ).rename_axis("grid_cell_id")
-
-
 class MultiScaleFeatureComputer(RegionMixin):
     """Compute multi-scale features for a given region."""
 
@@ -148,7 +95,7 @@ class MultiScaleFeatureComputer(RegionMixin):
         tree_canopy_filepath: utils.PathType | None = None,
         tree_val: int = 1,
         dem_filepath: utils.PathType | None = None,
-        crs: utils.CRSType | None = None,
+        crs: CRSType | None = None,
     ) -> None:
         """Initialize the feature computer object.
 

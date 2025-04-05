@@ -21,12 +21,12 @@ classifiers = [
 ]
 dependencies = [
   "geopandas>=1.0.0",
-  "meteora>=0.3.0",
   "numpy>=2.0.0",
   "osmnx>=2.0.0",
   "pandas",
   "pdal",
   "pooch",
+  "pyregeon",
   "pystac-client",
   "rasterio",
   "rasterstats",
