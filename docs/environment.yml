@@ -3,6 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - gdal=3.10.2
+  - ipython=9.1.0
   - myst-parser=4.0.1
   - nbsphinx=0.9.7
   - pip=25.0.1

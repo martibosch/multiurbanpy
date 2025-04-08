@@ -64,7 +64,7 @@ test = [
 Repository = "https://github.com/martibosch/multiurbanpy"
 
 [tool.codespell]
-skip = "docs/example.ipynb"
+skip = "docs/overview.ipynb"
 
 [tool.commitizen]
 major_version_zero = true
