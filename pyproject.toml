@@ -70,9 +70,6 @@ skip = "docs/example.ipynb"
 major_version_zero = true
 name = "cz_conventional_commits"
 tag_format = "v$version"
-version_files = [
-  "docs/conf.py"
-]
 version_provider = "pep621"
 version_scheme = "semver"
 
