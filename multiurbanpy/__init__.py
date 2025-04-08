@@ -1,5 +1,5 @@
 """multiurbanpy."""
 
-from multiurbanpy.core import MultiScaleFeatureComputer, generate_regular_grid_gser
+from multiurbanpy.core import MultiScaleFeatureComputer
 
 __version__ = "0.1.0"

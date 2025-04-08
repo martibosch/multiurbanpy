@@ -1,6 +1,5 @@
 """Compute features for a given region."""
 
-import hashlib
 import shutil
 import tempfile
 import warnings
@@ -10,6 +9,7 @@ from os import path
 import geopandas as gpd
 import numpy as np
 import numpy.typing as npt
+import osmnx as ox
 import pandas as pd
 import rasterio as rio
 import rasterstats
@@ -19,7 +19,6 @@ from rasterio import mask, transform
 from tqdm import tqdm
 
 from multiurbanpy import topo, utils
-from multiurbanpy.swisstopo import buildings, dem, tree_canopy
 
 # to use `progress_apply`
 tqdm.pandas()
@@ -84,68 +83,42 @@ def get_buffer_mask(
 
 
 class MultiScaleFeatureComputer(RegionMixin):
-    """Compute multi-scale features for a given region."""
+    """Compute multi-scale features for a given region.
+
+    Parameters
+    ----------
+    region : str, list-like, GeoSeries, GeoDataFrame, path-like or IO
+        The region for which to compute features. This can be either:
+        -  A string with a place name (Nominatim query) to geocode.
+        -  A sequence with the west, south, east and north bounds.
+        -  A geometric object, e.g., shapely geometry, or a sequence of geometric
+            objects. In such a case, the value will be passed as the `data` argument of
+            the GeoSeries constructor, and needs to be in the same CRS as the one used
+            by the client's class (i.e., the `CRS` class attribute).
+        -  A geopandas geo-series or geo-data frame.
+        -  A filename or URL, a file-like object opened in binary ('rb') mode, or a Path
+           object that will be passed to `geopandas.read_file`.
+    working_dir : path-like, optional
+        The directory where to store the intermediate files associated with this
+        instance. If None, a temporary directory will be created.
+    crs : crs-like, optional
+        Coordinate reference system (CRS) to use for computing features. If None, the
+        CRS will be inferred from the `region` argument.
+    """
 
     def __init__(
         self,
         region: RegionType,
         *,
         working_dir: utils.PathType | None = None,
-        bldg_gdf: gpd.GeoDataFrame | utils.PathType | None = None,
-        tree_canopy_filepath: utils.PathType | None = None,
-        tree_val: int = 1,
-        dem_filepath: utils.PathType | None = None,
         crs: CRSType | None = None,
     ) -> None:
-        """Initialize the feature computer object.
-
-        Parameters
-        ----------
-        region : str, list-like, GeoSeries, GeoDataFrame, path-like or IO
-            The region for which to compute features. This can be either:
-            -  A string with a place name (Nominatim query) to geocode.
-            -  A sequence with the west, south, east and north bounds.
-            -  A geometric object, e.g., shapely geometry, or a sequence of geometric
-                objects. In such a case, the value will be passed as the `data` argument
-                of the GeoSeries constructor, and needs to be in the same CRS as the one
-                used by the client's class (i.e., the `CRS` class attribute).
-            -  A geopandas geo-series or geo-data frame.
-            -  A filename or URL, a file-like object opened in binary ('rb') mode, or a
-                Path object that will be passed to `geopandas.read_file`.
-        working_dir : path-like, optional
-            The directory where to store the intermediate files associated with this
-            instance. If None, a temporary directory will be created.
-        bldg_gdf : GeoDataFrame or path-like, optional
-            The buildings geo-data frame to use. This can be either:
-            -  A geopandas geo-data frame.
-            -  A filename or URL, a file-like object opened in binary ('rb') mode, or a
-               Path object that will be passed to `geopandas.read_file`.
-            -  None, in which case the buildings will be downloaded from OSM using
-               osmnx.
-            If the geo-data frame has a "height" column, building volumes will be
-            computed alongside the areas. Otherwise, only the areas will be computed.
-        tree_canopy_filepath : path-like, optional
-            The path to the tree canopy raster file. If None, it will not be possible to
-            compute tree canopy features.
-        tree_val : integer, default 1
-            The value in the tree canopy raster that corresponds to tree canopy pixels.
-        dem_filepath : path-like, optional
-            The path to the digital elevation model (DEM) raster file. If None, it will
-            not be possible to compute topographic features.
-        crs : crs-like, optional
-            Coordinate reference system (CRS) to use for computing features. If None,
-            the CRS will be inferred from the `region` argument.
-
-        """
+        """Initialize the feature computer object."""
         # set working directory
         if working_dir is None:
             working_dir = tempfile.mkdtemp()
             self._tmp_dir = True
         self.working_dir = working_dir
-
-        # TODO: this is not necessary if we already pass the buildings, tree canopy and
-        # dem
-        pooch_retrieve_kwargs = {"path": working_dir}
 
         # process crs attribute
         if crs is not None:
@@ -158,122 +131,97 @@ class MultiScaleFeatureComputer(RegionMixin):
         if getattr(self, "CRS", None) is None:
             self.CRS = self.region.crs
 
-        # set a hash for the region (to identify cached results)
-        self.region_hash = hashlib.sha256(self.region.to_json().encode()).hexdigest()
-
-        # TODO: note that we should make sure that our rasters cover the entire
-        # `self.region` plus the largest buffer distance
-
-        # TODO: should building features be on-memory or on-disk?
-        if bldg_gdf is not None:
-            if not isinstance(bldg_gdf, gpd.GeoDataFrame):
-                bldg_gdf = gpd.read_file(bldg_gdf)
-            self.bldg_gdf = bldg_gdf.to_crs(self.CRS)
-        else:
-            bldg_gdf_filepath = path.join(
-                self.working_dir, f"{self.region_hash}-buildings.gpkg"
-            )
-            # allow resuming
-            if path.exists(bldg_gdf_filepath):
-                self.bldg_gdf = gpd.read_file(bldg_gdf_filepath)
-                utils.log(
-                    f"Found existing buildings geo-data frame at {bldg_gdf_filepath}"
-                )
-            else:
-                utils.log(
-                    "Getting building footprints and heights from OSM and swisstopo"
-                )
-                self.bldg_gdf = buildings.get_bldg_gdf(
-                    self.region["geometry"], **pooch_retrieve_kwargs
-                )
-                self.bldg_gdf.to_file(bldg_gdf_filepath)
-                utils.log(f"Saved buildings geo-data frame to {bldg_gdf_filepath}")
-
-        def _process_raster_filepath(raster_filepath, dst_filename):
-            # test that the file is in the same CRS as the region
-            with rio.open(raster_filepath) as src:
-                if src.crs != self.CRS:
-                    _raster_filepath = path.join(self.working_dir, dst_filename)
-                    gdal.Warp(_raster_filepath, raster_filepath, dstSRS=self.CRS)
-                else:
-                    _raster_filepath = raster_filepath
-            return _raster_filepath
-
-        if tree_canopy_filepath is not None:
-            self.tree_canopy_filepath = _process_raster_filepath(
-                tree_canopy_filepath, f"{self.region_hash}-tree-canopy.tif"
-            )
-        else:
-            tree_canopy_filepath = path.join(
-                self.working_dir, f"{self.region_hash}-tree-canopy.tif"
-            )
-            # allow resuming
-            if path.exists(tree_canopy_filepath):
-                utils.log(
-                    f"Found existing tree canopy raster at {tree_canopy_filepath}"
-                )
-                self.tree_canopy_filepath = tree_canopy_filepath
-            else:
-                utils.log("Getting tree canopy raster from swisstopo")
-                self.tree_canopy_filepath = tree_canopy.get_tree_canopy_raster(
-                    self.region["geometry"],
-                    tree_canopy_filepath,
-                    pooch_retrieve_kwargs=pooch_retrieve_kwargs,
-                )
-                utils.log(f"Saved tree canopy raster to {tree_canopy_filepath}")
-        self.tree_val = tree_val
-
-        if dem_filepath is not None:
-            self.dem_filepath = _process_raster_filepath(
-                dem_filepath, f"{self.region_hash}-dem.tif"
-            )
-        else:
-            dem_filepath = path.join(self.working_dir, f"{self.region_hash}-dem.tif")
-            # allow resuming
-            if path.exists(dem_filepath):
-                self.dem_filepath = dem_filepath
-                utils.log(f"Found existing DEM raster at {dem_filepath}")
-            else:
-                utils.log("Getting DEM raster from swisstopo")
-                self.dem_filepath = dem.get_dem_raster(
-                    self.region["geometry"],
-                    dem_filepath,
-                    pooch_retrieve_kwargs=pooch_retrieve_kwargs,
-                )
-                utils.log(f"Saved DEM raster to {dem_filepath}")
-
     def __del__(self) -> None:
         """Destructor to clean up temporary files."""
         if getattr(self, "_tmp_dir", False):
             shutil.rmtree(self.working_dir)
 
-    def compute_bldg_features(
-        self, site_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
-    ) -> pd.DataFrame | pd.Series:
-        """Compute building area (and volume if `bldg_gdf` has a "height" column)."""
+    def _process_raster_filepath(self, raster_filepath, *, dst_filename="raster.tif"):
+        # check that the file is in the same CRS as the region, otherwise reproject it
+        # and return the path to the reprojected raster
+        with rio.open(raster_filepath) as src:
+            if src.crs != self.CRS:
+                _raster_filepath = path.join(self.working_dir, dst_filename)
+                gdal.Warp(_raster_filepath, raster_filepath, dstSRS=self.CRS)
+            else:
+                _raster_filepath = raster_filepath
+        return _raster_filepath
 
-        def _compute_bldg_area(_bldg_gdf):
+    @property
+    def building_gdf(self) -> gpd.GeoDataFrame | None:
+        """Return the building geo-data frame."""
+        try:
+            return self._building_gdf
+        except AttributeError:
+            self._building_gdf = ox.features_from_polygon(
+                self.region["geometry"].to_crs(ox.settings.default_crs).iloc[0],
+                tags={"building": True},
+            ).to_crs(self.CRS)
+            return self._building_gdf
+
+    def compute_building_features(
+        self,
+        site_gser: gpd.GeoSeries,
+        buffer_dists: Iterable[float],
+        *,
+        building_gdf: gpd.GeoDataFrame | utils.PathType | None = None,
+    ) -> pd.DataFrame | pd.Series:
+        """Compute building area (and volume if `building_gdf` has a "height" column).
+
+        Parameters
+        ----------
+        site_gser : geopandas.GeoSeries
+            Site locations (point geometries) to compute features.
+        buffer_dists : iterable of numeric
+            The buffer distances to compute features, in the same units as the tree
+            canopy raster CRS.
+            building_gdf : GeoDataFrame or path-like, optional
+        The building geo-data frame to use. This can be either:
+            -  A geopandas geo-data frame.
+            -  A filename or URL, a file-like object opened in binary ('rb') mode, or a
+               Path object that will be passed to `geopandas.read_file`.
+            -  None, in which case the building will be downloaded from OSM using
+               osmnx.
+            If the geo-data frame has a "height" column, building volumes will be
+            computed alongside the areas. Otherwise, only the areas will be computed.
+
+        Returns
+        -------
+        building_features : pandas.DataFrame or pandas.Series
+            The building features for each site (first-level index) and buffer distance
+            (second-level index), as a data frame with total area ("building_area") and
+            volume ("building_volume") columns if there is building height information,
+            otherwise as a series of total areas.
+        """
+
+        def _compute_building_area(_building_gdf):
             return pd.Series(
                 {
-                    "bldg_area": _bldg_gdf["geometry"].area.sum(),
+                    "building_area": _building_gdf["geometry"].area.sum(),
                 }
             )
 
-        def _compute_bldg_area_vol(_bldg_gdf):
+        def _compute_building_area_vol(_building_gdf):
             return pd.Series(
                 {
-                    "bldg_area": _bldg_gdf["geometry"].area.sum(),
-                    "bldg_volume": (
-                        _bldg_gdf["geometry"].area * _bldg_gdf["height"]
+                    "building_area": _building_gdf["geometry"].area.sum(),
+                    "building_volume": (
+                        _building_gdf["geometry"].area * _building_gdf["height"]
                     ).sum(),
                 }
             )
 
+        # process `building_gdf` arg
+        if building_gdf is None:
+            building_gdf = self.building_gdf
+        elif not isinstance(building_gdf, gpd.GeoDataFrame):
+            building_gdf = gpd.read_file(building_gdf)
+
         # TODO: define this at initialization?
-        if "height" in self.bldg_gdf.columns:
-            _compute_features = _compute_bldg_area_vol
+        if "height" in building_gdf.columns:
+            _compute_features = _compute_building_area_vol
         else:
-            _compute_features = _compute_bldg_area
+            _compute_features = _compute_building_area
 
         # TODO: DRY with `_multiscale_raster_feature_df`
         site_index_name = site_gser.index.name
@@ -287,11 +235,11 @@ class MultiScaleFeatureComputer(RegionMixin):
                     (
                         site_gser.buffer(buffer_dist)
                         .to_frame(name="geometry")
-                        .sjoin(self.bldg_gdf)
+                        .sjoin(building_gdf)
                         .reset_index(site_index_name)
                         .groupby(by=site_index_name)
                         .progress_apply(_compute_features, include_groups=False)
-                        / (np.pi * buffer_dist**2)
+                        # / (np.pi * buffer_dist**2)
                     ).assign(buffer_dist=buffer_dist)
                     for buffer_dist in buffer_dists
                 ],
@@ -382,7 +330,7 @@ class MultiScaleFeatureComputer(RegionMixin):
                     **arr_to_features_kwargs,
                 )
 
-        # TODO: DRY with `compute_bldg_features`
+        # TODO: DRY with `compute_building_features`
         site_index_name = site_gser.index.name
         if site_index_name is None:
             site_index_name = "site_id"
@@ -419,11 +367,36 @@ class MultiScaleFeatureComputer(RegionMixin):
 
     def compute_tree_features(
         self,
+        tree_canopy_filepath: utils.PathType,
         site_gser: gpd.GeoSeries,
         buffer_dists: Iterable[float],
+        tree_val: float,
     ) -> pd.Series:
-        """Compute tree features."""
-        with rio.open(self.tree_canopy_filepath) as src:
+        """Compute tree features.
+
+        Parameters
+        ----------
+        tree_canopy_filepath : path-like, optional
+            The path to the tree canopy raster file.
+        site_gser : geopandas.GeoSeries
+            Site locations (point geometries) to compute features.
+        buffer_dists : iterable of numeric
+            The buffer distances to compute features, in the same units as the tree
+            canopy raster CRS.
+        tree_val : numeric
+            The value in the tree canopy raster that corresponds to tree canopy pixels.
+
+        Returns
+        -------
+        tree_features_ser: pandas.Series
+            The tree features for each site (first-level index) and buffer distance
+            (second-level index).
+        """
+        # reproject if needed
+        tree_canopy_filepath = self._process_raster_filepath(
+            tree_canopy_filepath, dst_filename="tree-canopy.tif"
+        )
+        with rio.open(tree_canopy_filepath) as src:
             tree_features_ser = (
                 MultiScaleFeatureComputer._multiscale_raster_stats_feature_ser(
                     src,
@@ -431,15 +404,35 @@ class MultiScaleFeatureComputer(RegionMixin):
                     buffer_dists,
                     "sum",
                     rescale=True,
-                    target_val=self.tree_val,
+                    target_val=tree_val,
                 )
             )
 
         return tree_features_ser.rename("tree_canopy")
 
-    def compute_elevation_ser(self, site_gser: gpd.GeoSeries) -> pd.Series:
-        """Compute elevation."""
-        with rio.open(self.dem_filepath) as src:
+    def compute_elevation_ser(
+        self, dem_filepath: utils.PathType, site_gser: gpd.GeoSeries
+    ) -> pd.Series:
+        """Compute elevation.
+
+        Parameters
+        ----------
+        dem_filepath : path-like, optional
+            The path to the digital elevation model (DEM) raster file.
+        site_gser : geopandas.GeoSeries
+            Site locations (point geometries) to compute features.
+
+        Returns
+        -------
+        elevation_ser: pandas.Series
+            The elevation for each site (index).
+        """
+        # reproject if needed
+        # TODO: how to avoid reprojecting twice for elevation and topo features?
+        dem_filepath = self._process_raster_filepath(
+            dem_filepath, dst_filename="dem.tif"
+        )
+        with rio.open(dem_filepath) as src:
             return pd.Series(
                 src.read(1)[transform.rowcol(src.transform, site_gser.x, site_gser.y)],
                 index=site_gser.index,
@@ -447,12 +440,75 @@ class MultiScaleFeatureComputer(RegionMixin):
             )
 
     def compute_topo_features_df(
-        self, site_gser: gpd.GeoSeries, buffer_dists: Iterable[float]
+        self,
+        dem_filepath: utils.PathType,
+        site_gser: gpd.GeoSeries,
+        buffer_dists: Iterable[float],
+        *,
+        topo_features: str | Iterable[str] | None = None,
     ) -> pd.DataFrame:
-        """Compute topographic features."""
-        with rio.open(self.dem_filepath) as src:
+        """Compute topographic features.
+
+        Parameters
+        ----------
+        dem_filepath : path-like, optional
+            The path to the digital elevation model (DEM) raster file.
+        site_gser : geopandas.GeoSeries
+            Site locations (point geometries) to compute features.
+        buffer_dists : iterable of numeric
+            The buffer distances to compute features, in the same units as the tree
+            canopy raster CRS.
+        topo_features : str or iterable of str, optional
+            The topographic features to compute, have to be among "slope", "northness",
+            "tpi" and/or "fac". If None, all features are computed.
+
+        Returns
+        -------
+        topo_features_df: pandas.DataFrame
+            The topographic features (columns) for each site (first-level index) and
+            buffer distance (second-level index).
+        """
+        # reproject if needed
+        # TODO: how to avoid reprojecting twice for elevation and topo features?
+        dem_filepath = self._process_raster_filepath(
+            dem_filepath, dst_filename="dem.tif"
+        )
+
+        if topo_features is None:
+            # do NOT compute flow accumulation by default
+            topo_features = ["slope", "northness", "tpi"]
+        elif isinstance(topo_features, str):
+            topo_features = [topo_features]
+
+        with rio.open(dem_filepath) as src:
             dem_res = src.res[0]
             dem_nodata = src.nodata
+            # define it here to be able to set resolution/nodata in args/kwargs
+            topo_features_dict = {}
+            if "slope" in topo_features:
+                topo_features_dict["slope"] = (
+                    topo.compute_terrain_attribute,
+                    ["slope_riserun", dem_res, dem_nodata, np.mean],
+                    {},
+                )
+            if "northness" in topo_features:
+                topo_features_dict["northness"] = (
+                    topo.compute_terrain_attribute,
+                    ["aspect", dem_res, dem_nodata, topo.northness],
+                    {},
+                )
+            if "tpi" in topo_features:
+                topo_features_dict["tpi"] = (
+                    topo.comparative_height_at_center,
+                    [np.mean],
+                    {"nodata": dem_nodata},
+                )
+            if "fac" in topo_features:
+                topo_features_dict["fac"] = (
+                    topo.flow_accumulation_at_center,
+                    [dem_res, dem_nodata],
+                    {"fac_method": "D8"},
+                )
 
             @topo.no_outputs
             def dem_arr_to_topo_features(dem_arr, buffer_mask_dict):
@@ -470,37 +526,19 @@ class MultiScaleFeatureComputer(RegionMixin):
                         buffer_dem_arr[: dem_arr.shape[0], : dem_arr.shape[1]] = dem_arr
                     site_features.append(
                         [
-                            topo.compute_terrain_attribute(
+                            func(
                                 buffer_dem_arr,
-                                "slope_riserun",
-                                dem_res,
-                                dem_nodata,
-                                np.mean,
-                            ),
-                            topo.compute_terrain_attribute(
-                                buffer_dem_arr,
-                                "aspect",
-                                dem_res,
-                                dem_nodata,
-                                topo.northness,
-                            ),
-                            topo.comparative_height_at_center(
-                                np.where(
-                                    buffer_dem_arr != dem_nodata, buffer_dem_arr, np.nan
-                                ),
-                                np.nanmean,
-                            ),
-                            # topo.flow_accumulation_at_center(
-                            #     buffer_dem_arr, dem_res, dem_nodata
-                            # ),
+                                *args,
+                                **kwargs,
+                            )
+                            for func, args, kwargs in topo_features_dict.values()
                         ]
                     )
 
                 return pd.DataFrame(
                     site_features,
                     index=pd.Series(buffer_dists, name="buffer_dist"),
-                    # columns=["slope", "northness", "tpi", "fac"],
-                    columns=["slope", "northness", "tpi"],
+                    columns=topo_features_dict.keys(),
                 )
 
             with warnings.catch_warnings(), np.errstate(divide="ignore"):
