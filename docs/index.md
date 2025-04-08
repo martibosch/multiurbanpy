@@ -4,10 +4,10 @@ hidden:
 maxdepth: 1
 ---
 
-usage
+overview
 api
 contributing
-history
+changelog
 ```
 
 ```{include} ../README.md
