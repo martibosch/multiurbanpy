@@ -56,22 +56,25 @@ def northness(aspect_arr: npt.ArrayLike) -> float:
 
 
 def comparative_height_at_center(
-    dem_arr: npt.ArrayLike, baseline_func: Callable
+    dem_arr: npt.ArrayLike, baseline_func: Callable, *, nodata: float | None = None
 ) -> float:
-    """Compute a comparative height index from a DEM array around a station.
+    """Compute a comparative height index from a DEM array around a site.
 
-    Difference between the station elevation (assumed to be center of the buffer array)
-    and the elevation within the buffer array. The baseline for comparison is computed
-    with `baseline_func` function, e.g., `np.min` for the "relative height" index or
+    Difference between the site elevation (assumed to be center of the buffer array) and
+    the elevation within the buffer array. The baseline for comparison is computed with
+    `baseline_func` function, e.g., `np.min` for the "relative height" index or
     `np.mean` for the "topographic position" index.
     """
-    return dem_arr[dem_arr.shape[0] // 2, dem_arr.shape[1] // 2] - baseline_func(
-        dem_arr
-    )
+    site_elevation = dem_arr[dem_arr.shape[0] // 2, dem_arr.shape[1] // 2]
+    if nodata is not None:
+        # we cannot do this before getting the site elevation because we need the 2D
+        # information for that (site is at the 2D center).
+        dem_arr = dem_arr[dem_arr != nodata]
+    return site_elevation - baseline_func(dem_arr)
 
 
 def flow_accumulation_at_center(
-    dem_arr: npt.ArrayLike, dst_res: float, dst_fill: float, fac_method: str = "D8"
+    dem_arr: npt.ArrayLike, dst_res: float, dst_fill: float, *, fac_method: str = "D8"
 ) -> float:
     """Compute flow accumulation from a DEM array.
 
