@@ -1,9 +1,13 @@
 name: multiurbanpy
 channels:
-    - conda-forge
+  - conda-forge
 dependencies:
-    - python=3.13
-    - gdal=3.10.2
-    - myst-parser=4.0.1
-    - sphinx=8.2.3
-    - pip=25.0.1
+  - gdal=3.10.2
+  - myst-parser=4.0.1
+  - nbsphinx=0.9.7
+  - pip=25.0.1
+  - pydata-sphinx-theme=0.16.1
+  - python=3.13
+  - richdem=2.3.0
+  - setuptools=75.8.2
+  - sphinx=8.2.3

@@ -3,17 +3,29 @@
 import os
 import sys
 
+import pkg_resources
+
 project = "multiurbanpy"
 author = "Martí Bosch"
 
-__version__ = "0.1.0"
-version = __version__
-release = __version__
+release = pkg_resources.get_distribution("multiurbanpy").version
+version = ".".join(release.split(".")[:2])
 
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.napoleon", "myst_parser"]
+extensions = [
+    "myst_parser",
+    "nbsphinx",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+]
 
 autodoc_typehints = "description"
-html_theme = "default"
+html_theme = "pydata_sphinx_theme"
+html_theme_options = {
+    "github_url": "https://github.com/martibosch/swisstopopy",
+}
 
 # add module to path
 sys.path.insert(0, os.path.abspath(".."))
+
+# do NOT execute notebooks
+nbsphinx_execute = "never"
