@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "multiurbanpy"
+name = "multilandpy"
 version = "0.1.0"
-description = "Multi-scale urban features in Python"
+description = "Multi-scale landscape features in Python"
 readme = "README.md"
 authors = [
   {email = "marti.bosch@epfl.ch", name = "Martí Bosch"}
@@ -61,7 +61,7 @@ test = [
 ]
 
 [project.urls]
-Repository = "https://github.com/martibosch/multiurbanpy"
+Repository = "https://github.com/martibosch/multilandpy"
 
 [tool.codespell]
 skip = "docs/overview.ipynb"
@@ -85,7 +85,7 @@ ignore_errors = true
 omit = ["tests/*", "docs/conf.py"]
 
 [tool.coverage.run]
-source = ["multiurbanpy"]
+source = ["multilandpy"]
 
 [tool.ruff]
 line-length = 88
@@ -103,14 +103,14 @@ select = [
 
 [tool.ruff.lint.isort]
 known-first-party = [
-  "multiurbanpy"
+  "multilandpy"
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = [
   "F401"
 ]
-"tests/test_multiurbanpy.py" = [
+"tests/test_multilandpy.py" = [
   "D"
 ]
 
@@ -119,8 +119,8 @@ convention = "numpy"
 
 [tool.setuptools.packages.find]
 include = [
-  "multiurbanpy",
-  "multiurbanpy.*"
+  "multilandpy",
+  "multilandpy.*"
 ]
 
 [tool.tox]

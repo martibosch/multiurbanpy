@@ -1,7 +1,7 @@
 # Usage
 
-To use multiurbanpy in a project
+To use multilandpy in a project
 
 ```python
-import multiurbanpy
+import multilandpy
 ```

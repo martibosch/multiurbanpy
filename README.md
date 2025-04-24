@@ -1,18 +1,18 @@
-[![PyPI version fury.io](https://badge.fury.io/py/multiurbanpy.svg)](https://pypi.python.org/pypi/multiurbanpy/)
-[![Documentation Status](https://readthedocs.org/projects/multiurbanpy/badge/?version=latest)](https://multiurbanpy.readthedocs.io/en/latest/?badge=latest)
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/martibosch/multiurbanpy/main.svg)](https://results.pre-commit.ci/latest/github/martibosch/multiurbanpy/main)
-[![codecov](https://codecov.io/gh/martibosch/multiurbanpy/branch/main/graph/badge.svg?token=hKoSSRn58a)](https://codecov.io/gh/martibosch/multiurbanpy)
-[![GitHub license](https://img.shields.io/github/license/martibosch/multiurbanpy.svg)](https://github.com/martibosch/multiurbanpy/blob/main/LICENSE)
+[![PyPI version fury.io](https://badge.fury.io/py/multilandpy.svg)](https://pypi.python.org/pypi/multilandpy/)
+[![Documentation Status](https://readthedocs.org/projects/multilandpy/badge/?version=latest)](https://multilandpy.readthedocs.io/en/latest/?badge=latest)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/martibosch/multilandpy/main.svg)](https://results.pre-commit.ci/latest/github/martibosch/multilandpy/main)
+[![codecov](https://codecov.io/gh/martibosch/multilandpy/branch/main/graph/badge.svg?token=hKoSSRn58a)](https://codecov.io/gh/martibosch/multilandpy)
+[![GitHub license](https://img.shields.io/github/license/martibosch/multilandpy.svg)](https://github.com/martibosch/multilandpy/blob/main/LICENSE)
 
-# multiurbanpy
+# multilandpy
 
-Computing multi-scale urban features (building areas and volumes, tree canopy, terrain/topographic indices...) in Python.
+Computing multi-scale landscape features for vector and raster layers (terrain/topographic indices, vegetation, building areas and volumes...) in Python.
 
-> *multiurbanpy* is an analogy to the [multilandr](https://github.com/phuais/multilandR) package [1] to compute multi-scale landscape metrics in R. However, instead of lansdcape metrics<sup>[1](#pylandstats)</sup>, multiurbanpy computes mutli-scale metrics for urban landscapes such as building areas and volumes, tree canopy cover or topographic features.
+> *multilandpy* is an analogy to the [multilandr](https://github.com/phuais/multilandR) package [1] to compute multi-scale landscape metrics in R. However, instead of lansdcape metrics<sup>[1](#pylandstats)</sup>, multilandpy computes generic mutli-scale landscape features for vector and raster layers, such as topographic features, tree canopy cover as well as building areas and volumes.
 
 Example application to compute the proportion of tree canopy around (with multiple buffer radii) weather stations in Zurich, Switzerland:
 
-![stations-tree-canopy](https://github.com/martibosch/multiurbanpy/raw/main/figures/stations-tree-canopy.png)
+![stations-tree-canopy](https://github.com/martibosch/multilandpy/raw/main/figures/stations-tree-canopy.png)
 
 *(C) OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team hosted by OpenStreetMap France*
 
@@ -23,7 +23,7 @@ Start by instantiating a `MultiScaleFeatureComputer` for [a given region of inte
 ```python
 import swisstopopy
 
-import multiurbanpy as mup
+import multilandpy
 
 # parameters
 region = "EPFL"
@@ -32,7 +32,7 @@ buffer_dists = [10, 25, 50, 100]
 grid_res = 200
 
 # instantiate the multi-scale feature computer
-msfc = mup.MultiScaleFeatureComputer(region=region, crs=crs)
+msfc = multilandpy.MultiScaleFeatureComputer(region=region, crs=crs)
 
 # generate a regular grid of points/sites within the region
 site_gser = msfc.generate_regular_grid_gser(grid_res, geometry_type="point")
@@ -74,21 +74,21 @@ features_df.head()
 |              |         100 | 250923.879244 |    0.043386 | 0.073637 |  0.006363 | -0.716217 |
 |            1 |          10 |    627.309698 |    0.000000 | 0.095521 |  0.228504 |  0.080963 |
 
-See the [overview notebook](https://multiurbanpy.readthedocs.io/en/latest/overview.html) and the [API documentation](https://multiurbanpy.readthedocs.io/en/latest/api.html) for more details on the features of multiurbanpy.
+See the [overview notebook](https://multilandpy.readthedocs.io/en/latest/overview.html) and the [API documentation](https://multilandpy.readthedocs.io/en/latest/api.html) for more details on the features of multilandpy.
 
 ## Installation
 
-Like many other geospatial Python packages, multiurbanpy requires many base C libraries that cannot be installed with pip. Accordingly, the best way to install multiurbanpy is to use conda/mamba, i.e., in a given conda environment, run:
+Like many other geospatial Python packages, multilandpy requires many base C libraries that cannot be installed with pip. Accordingly, the best way to install multilandpy is to use conda/mamba, i.e., in a given conda environment, run:
 
 ```bash
 # or mamba install -c conda-forge geopandas
 conda install -c conda-forge geopandas
 ```
 
-Within the same conda environment, you can then install multiurbanpy using pip:
+Within the same conda environment, you can then install multilandpy using pip:
 
 ```bash
-pip install https://github.com/martibosch/multiurbanpy/archive/main.zip
+pip install https://github.com/martibosch/multilandpy/archive/main.zip
 ```
 
 ## Acknowledgements

@@ -1,4 +1,4 @@
-name: multiurbanpy
+name: multilandpy
 channels:
   - conda-forge
 dependencies:

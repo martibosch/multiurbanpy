@@ -18,7 +18,7 @@ from pyregeon import CRSType, RegionMixin, RegionType
 from rasterio import mask, transform
 from tqdm import tqdm
 
-from multiurbanpy import topo, utils
+from multilandpy import topo, utils
 
 # to use `progress_apply`
 tqdm.pandas()

@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from multiurbanpy import settings
+from multilandpy import settings
 
 ########################################################################################
 # type annotations
